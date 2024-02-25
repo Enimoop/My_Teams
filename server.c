@@ -199,9 +199,23 @@ void accept_new_connection(int server_socket,fd_set *all_sockets, Client clients
     printf("msg_to_send: %s\n", msg_to_send);
     status = send(client_fd, msg_to_send, strlen(msg_to_send), 0);
     memset(&msg_to_send, '\0', sizeof msg_to_send);
-     memset(&pseudo, '\0', sizeof pseudo);
+    
     if (status == -1)
         printf("[Server] Send error to client %d: %s\n", client_fd, strerror(errno));
+
+     memset(&msg_to_send, '\0', sizeof msg_to_send);
+    sprintf(msg_to_send, "Connected clients:\n");
+    for (int i = 0; i < *num_clients; i++) {
+        if (strcmp(clients[i].pseudo, pseudo) != 0) { 
+            strcat(msg_to_send, clients[i].pseudo);
+            strcat(msg_to_send, "\n");
+        }
+    }
+    status = send(client_fd, msg_to_send, strlen(msg_to_send), 0);
+    if (status == -1)
+        printf("[Server] Send error to client %d: %s\n", client_fd, strerror(errno));
+    memset(&msg_to_send, '\0', sizeof msg_to_send);
+    memset(&pseudo, '\0', sizeof pseudo);
 }
 
 // Lit le message d'une socket et relaie le message à toutes les autres
