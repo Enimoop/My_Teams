@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
 
 #define PORT 4242 // le port de notre serveur
 
@@ -23,6 +24,8 @@ int create_server_socket(void);
 void accept_new_connection(int listener_socket,fd_set *all_sockets,Client clients[], int *num_clients, int *fd_max);
 void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int *num_clients, int server_socket);
 void handle_server_interrupt(int signal);
+void conversation_log(const char* message);
+char* heure();
 
 int main(void)
 {
@@ -267,6 +270,7 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
                     
             }
         }
+        conversation_log(msg_to_send);
         memset(&pseudo, '\0', sizeof pseudo);
         memset(&buffer, '\0', sizeof buffer);
         memset(&msg_to_send, '\0', sizeof msg_to_send);
@@ -279,3 +283,28 @@ void handle_server_interrupt(int signal)
     close(server_socket);
     exit(0);
 } 
+
+void conversation_log(const char* message)
+{
+    FILE *fichier;
+
+    fichier = fopen("conversation.log", "at, ccs=UTF-8");
+
+    if (fichier == NULL) {
+        fprintf(stderr, "Peut pas ouvrir le fichier avec UTF-8\n");
+        return;
+    }
+
+    fprintf(fichier,"[%s] %s\n", heure(), message);
+
+    fclose(fichier);
+}
+
+char* heure()
+{
+    static char buffer[80];
+    time_t timestamp = time(NULL);
+
+    strftime(buffer, sizeof(buffer),"%X", localtime(&timestamp));
+    return buffer;
+}
