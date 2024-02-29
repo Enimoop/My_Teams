@@ -249,6 +249,7 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
 {
     char buffer[BUFSIZ];
     char msg_to_send[BUFSIZ+800];
+    char msg_to_send_me[BUFSIZ+800];
     int bytes_read;
     int status;
     int i;
@@ -368,10 +369,12 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
                 }
                 else if (clients[i].socket_fd == socket)
                 {
+                    memset(&msg_to_send_me, '\0', sizeof(msg_to_send_me));
                     memset(&msg_to_send, '\0', sizeof(msg_to_send));
-                    sprintf(msg_to_send, "[%s] (Me): %s",pseudo_with_status, buffer);
+                    sprintf(msg_to_send, "[%s]: %s",pseudo_with_status, buffer);
+                    sprintf(msg_to_send_me, "[%s] (Me): %s",pseudo_with_status, buffer);
                     printf("msg_to_send: %s\n", msg_to_send);
-                    status = send(clients[i].socket_fd, msg_to_send, strlen(msg_to_send), 0);
+                    status = send(clients[i].socket_fd, msg_to_send_me, strlen(msg_to_send_me), 0);
                     if (status == -1)
                         printf("[Server] Send error to client %d: %s\n", i, strerror(errno));
                 }
