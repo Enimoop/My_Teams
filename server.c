@@ -27,7 +27,7 @@ void accept_new_connection(int listener_socket,fd_set *all_sockets,Client client
 void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int *num_clients, int server_socket, int *fd_max);
 void handle_server_interrupt(int signal);
 void conversation_log(const char* message);
-void handle_kick_command(char *username, int server_socket, fd_set *all_sockets, Client clients[], int num_clients, int *fd_max);
+void handle_kick_command(char *username, int server_socket, fd_set *all_sockets, Client clients[], int *num_clients, int *fd_max);
 void handle_status_command(char *status, int socket, Client clients[], int num_clients); // Nouvelle fonction pour gérer la commande /status
 char* heure();
 void notify_clients_on_connection(Client clients[], int num_clients, char* new_client_pseudo);
@@ -48,8 +48,8 @@ int main(void)
     // Initialisation du tableau des clients
     for (i = 0; i < FD_SETSIZE; i++) {
         clients[i].socket_fd = -1; // Initialise tous les descripteurs de fichiers à -1 (non connecté)
-        memset(clients[i].pseudo, '\0', sizeof(clients[i].pseudo)); // Initialise tous les pseudos à une chaîne vide
-        memset(clients[i].status, '\0', sizeof(clients[i].status)); // Initialisation du status
+        memset(clients[i].pseudo, '\0', sizeof(clients[i].pseudo)); 
+        memset(clients[i].status, '\0', sizeof(clients[i].status)); 
     }
 
 
@@ -283,7 +283,6 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
         // Enlève le client de la liste des clients
         for (i = 0; i < *num_clients; i++) {
             if (clients[i].socket_fd == socket) {
-                // Décale les autres clients vers la gauche pour combler le trou
                 for (int j = i; j < *num_clients - 1; j++) {
                     clients[j] = clients[j + 1];
                 }
@@ -328,8 +327,7 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
                 token = strtok(NULL, " ");
                 if (token != NULL)
                 {
-                    // L'utilisateur a fourni un nom d'utilisateur à kicker
-                    handle_kick_command(token, server_socket, all_sockets, clients, *num_clients, fd_max);
+                    handle_kick_command(token, server_socket, all_sockets, clients, num_clients, fd_max);
                     return;
                 }
             }
@@ -343,7 +341,6 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
                 token = strtok(NULL, " ");
                 if (token != NULL)
                 {
-                    // L'utilisateur a fourni un statut à définir
                     handle_status_command(token, socket, clients, *num_clients);
                     return;
                 }
@@ -389,28 +386,28 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
         
 }
 
-void handle_kick_command(char *username, int server_socket, fd_set *all_sockets, Client clients[], int num_clients, int *fd_max)
+void handle_kick_command(char *username, int server_socket, fd_set *all_sockets, Client clients[], int *num_clients, int *fd_max)
 {
     // Parcourir la liste des clients pour trouver celui à kicker
     int i;
-    for (i = 0; i < num_clients; i++) {
+    for (i = 0; i < *num_clients; i++) {
         if (strcmp(clients[i].pseudo, username) == 0) {
             // Fermer la socket du client à kicker
             close(clients[i].socket_fd);
-            FD_CLR(clients[i].socket_fd, all_sockets); // Retirer la socket de l'ensemble surveillé
+            FD_CLR(clients[i].socket_fd, all_sockets); // Enlever la socket de l'ensemble
 
             // Supprimer le client de la liste des clients
-            for (int j = i; j < num_clients - 1; j++) {
+            for (int j = i; j < *num_clients - 1; j++) {
                 clients[j] = clients[j + 1];
             }
-            num_clients--;
+            (*num_clients)--;
 
             printf("[Server] User '%s' has been kicked.\n", username);
 
-            // Envoyer un message de confirmation à tous les autres clients
+            
             char kick_msg[256];
             sprintf(kick_msg, "[Server] User '%s' has been kicked.\n", username);
-            for (int k = 0; k < num_clients; k++) {
+            for (int k = 0; k < *num_clients; k++) {
                 if (clients[k].socket_fd != server_socket) {
                     send(clients[k].socket_fd, kick_msg, strlen(kick_msg), 0);
                 }
@@ -420,7 +417,7 @@ void handle_kick_command(char *username, int server_socket, fd_set *all_sockets,
         }
     }
 
-    // Si l'utilisateur n'a pas été trouvé
+    
     printf("[Server] User '%s' not found.\n", username);
 }
 
@@ -444,7 +441,7 @@ void handle_status_command(char *status, int socket, Client clients[], int num_c
                 
             }
 
-            // Vérifier si le message a été envoyé avec succès
+            
             if (status_sent) {
                 printf("[Server] Status change notification sent to all clients.\n");
             } else {

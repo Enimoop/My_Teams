@@ -8,9 +8,9 @@
 #include <sys/select.h>
 #include <curses.h>
 
-#define MESSAGE_WINDOW_HEIGHT 17
-#define MESSAGE_WINDOW_WIDTH 60
-#define INPUT_WINDOW_HEIGHT 4
+#define MESSAGE_WINDOW_HEIGHT 18
+#define MESSAGE_WINDOW_WIDTH 80
+#define INPUT_WINDOW_HEIGHT 6
 #define INPUT_WINDOW_WIDTH 80
 #define HEADER_WINDOW_HEIGHT 1
 #define HEADER_WINDOW_WIDTH 80
@@ -63,6 +63,10 @@ int main(int argc, char* argv[]) {
 
     char* ip = argv[1];
     int port = atoi(argv[2]);
+    if (port < 1024 || port > 65535) {
+        printf("Erreur: le port doit être compris entre 1024 et 65535\n");
+        return 1;
+    }
     int socket_desc;
     char message[BUFSIZ];
     char connection[BUFSIZ];
