@@ -8,18 +8,20 @@
 #include <sys/select.h>
 #include <curses.h>
 
-#define MESSAGE_WINDOW_HEIGHT 20
-#define MESSAGE_WINDOW_WIDTH 80
-#define INPUT_WINDOW_HEIGHT 3
+#define MESSAGE_WINDOW_HEIGHT 17
+#define MESSAGE_WINDOW_WIDTH 60
+#define INPUT_WINDOW_HEIGHT 4
 #define INPUT_WINDOW_WIDTH 80
 #define HEADER_WINDOW_HEIGHT 1
 #define HEADER_WINDOW_WIDTH 80
 
+
+
 void init_curses() {
-    initscr(); // Initialise l'environnement curses
-    cbreak(); // Permet la saisie en mode ligne
-    //noecho(); // Désactive l'écho des caractères saisis
-    keypad(stdscr, TRUE); // Permet l'utilisation des touches spéciales
+    initscr(); 
+    cbreak();
+    //noecho();
+    keypad(stdscr, TRUE);
 }
 
 void end_curses() {
@@ -33,7 +35,7 @@ void send_message(int socket_desc, char* message) {
 }
 
 void receive_message(int socket_desc, WINDOW *message_win) {
-    char buffer[1024];
+    char buffer[BUFSIZ];
     memset(buffer, '\0', sizeof(buffer));
     ssize_t message_recu = recv(socket_desc, buffer, sizeof(buffer), 0);
     if (message_recu <= 0) {
@@ -62,8 +64,9 @@ int main(int argc, char* argv[]) {
     char* ip = argv[1];
     int port = atoi(argv[2]);
     int socket_desc;
-    char message[1024];
-    char connection[1024];
+    char message[BUFSIZ];
+    char connection[BUFSIZ];
+    
     char* pseudo = argv[3];
     WINDOW *message_win, *input_win, *header_win;
     
@@ -97,11 +100,17 @@ int main(int argc, char* argv[]) {
             printf("Send failed\n");
         }
         ssize_t bytes_received = recv(socket_desc, connection, sizeof(connection), 0);
+        
         wprintw(header_win, "%s\n", "Entrez votre message:");
         wrefresh(header_win);
+        
         wprintw(message_win, "%s\n", connection);
+        
+
         wrefresh(message_win);
+        
         memset(connection, '\0', sizeof(connection));
+        
         
     }
 
@@ -111,7 +120,7 @@ int main(int argc, char* argv[]) {
 
     
 
-    scrollok(message_win, TRUE); // Active le défilement automatique dans la fenêtre des messages
+    scrollok(message_win, TRUE); 
 
     
     while(1) {

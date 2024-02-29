@@ -16,16 +16,22 @@
 typedef struct {
     int socket_fd;
     char pseudo[256];
+    char status[256];
 } Client;
 
 int server_socket;
+int first_client_socket = -1; // Socket du premier client connecté
 
 int create_server_socket(void);
 void accept_new_connection(int listener_socket,fd_set *all_sockets,Client clients[], int *num_clients, int *fd_max);
-void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int *num_clients, int server_socket);
+void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int *num_clients, int server_socket, int *fd_max);
 void handle_server_interrupt(int signal);
 void conversation_log(const char* message);
+void handle_kick_command(char *username, int server_socket, fd_set *all_sockets, Client clients[], int num_clients, int *fd_max);
+void handle_status_command(char *status, int socket, Client clients[], int num_clients); // Nouvelle fonction pour gérer la commande /status
 char* heure();
+void notify_clients_on_connection(Client clients[], int num_clients, char* new_client_pseudo);
+void notify_clients_on_disconnection(Client clients[], int num_clients, char* disconnected_client_pseudo);
 
 int main(void)
 {
@@ -43,6 +49,7 @@ int main(void)
     for (i = 0; i < FD_SETSIZE; i++) {
         clients[i].socket_fd = -1; // Initialise tous les descripteurs de fichiers à -1 (non connecté)
         memset(clients[i].pseudo, '\0', sizeof(clients[i].pseudo)); // Initialise tous les pseudos à une chaîne vide
+        memset(clients[i].status, '\0', sizeof(clients[i].status)); // Initialisation du status
     }
 
 
@@ -104,7 +111,7 @@ int main(void)
                 accept_new_connection(server_socket,&all_sockets, clients, &num_clients, &fd_max);
             else
             // La socket est une socket client, on va la lire
-                read_data_from_socket(i,&all_sockets, clients, &num_clients, server_socket);
+                read_data_from_socket(i,&all_sockets, clients, &num_clients, server_socket, &fd_max);
             i++;
         }
         signal(SIGINT, handle_server_interrupt);
@@ -134,6 +141,7 @@ int create_server_socket(void)
         return (-1);
     }
     printf("[Server] Created server socket fd: %d\n", socket_fd);
+    printf("BUFFER SIZE: %d\n", BUFSIZ);
 
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &enable_reuse, sizeof(enable_reuse)) < 0) {
         printf("[Server] setsockopt(SO_REUSEADDR) failed: %s\n", strerror(errno));
@@ -174,7 +182,6 @@ void accept_new_connection(int server_socket,fd_set *all_sockets, Client clients
     if (client_fd > *fd_max)
         *fd_max = client_fd; // Met à jour la plus grande socket
 
-
     char pseudo[256];
     ssize_t bytes_received = recv(client_fd, pseudo, sizeof(pseudo), 0);
     if (bytes_received <= 0) {
@@ -194,24 +201,43 @@ void accept_new_connection(int server_socket,fd_set *all_sockets, Client clients
 
     printf("[Server] Accepted new connection on client socket %d.\n", client_fd);
 
+    if (first_client_socket == -1) {
+        first_client_socket = client_fd; // Enregistrer le socket du premier client connecté
+    }
+
+
     memset(&msg_to_send, '\0', sizeof msg_to_send);
     sprintf(msg_to_send, "Welcome %s. You are client fd [%d]\n",pseudo, client_fd);
     printf("msg_to_send: %s\n", msg_to_send);
     status = send(client_fd, msg_to_send, strlen(msg_to_send), 0);
     memset(&msg_to_send, '\0', sizeof msg_to_send);
     
-    if (status == -1)
+    if (status == -1) {
         printf("[Server] Send error to client %d: %s\n", client_fd, strerror(errno));
+    }
 
-     memset(&msg_to_send, '\0', sizeof msg_to_send);
-    sprintf(msg_to_send, "Connected clients:\n");
-    for (int i = 0; i < *num_clients; i++) {
-        if (strcmp(clients[i].pseudo, pseudo) != 0) { 
-            strcat(msg_to_send, clients[i].pseudo);
-            strcat(msg_to_send, "\n");
+    memset(&msg_to_send, '\0', sizeof msg_to_send);
+
+    if (*num_clients > 1) {
+        sprintf(msg_to_send, "Connected clients:\n");
+        for (int i = 0; i < *num_clients; i++) {
+            if (strcmp(clients[i].pseudo, pseudo) != 0) { 
+                strcat(msg_to_send, clients[i].pseudo);
+                if (strlen(clients[i].status) > 0) {
+                    strcat(msg_to_send, " (");
+                    strcat(msg_to_send, clients[i].status);
+                    strcat(msg_to_send, ")");
+                }
+                strcat(msg_to_send, "\n");
+            }
         }
+        strcat(msg_to_send, "\n");
+    } else {
+    sprintf(msg_to_send, "Connected clients:\nNone\n");
     }
     status = send(client_fd, msg_to_send, strlen(msg_to_send), 0);
+    notify_clients_on_connection(clients, *num_clients, pseudo);
+
     if (status == -1)
         printf("[Server] Send error to client %d: %s\n", client_fd, strerror(errno));
     memset(&msg_to_send, '\0', sizeof msg_to_send);
@@ -219,10 +245,10 @@ void accept_new_connection(int server_socket,fd_set *all_sockets, Client clients
 }
 
 // Lit le message d'une socket et relaie le message à toutes les autres
-void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int *num_clients, int server_socket)
+void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int *num_clients, int server_socket, int *fd_max)
 {
     char buffer[BUFSIZ];
-    char msg_to_send[BUFSIZ+300];
+    char msg_to_send[BUFSIZ+800];
     int bytes_read;
     int status;
     int i;
@@ -231,12 +257,23 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
     bytes_read = recv(socket, buffer, BUFSIZ, 0);
     if (bytes_read <= 0)
     {
-        if (bytes_read == 0)
+        if (bytes_read == 0){
             printf("[%d] Client socket closed connection.\n", socket);
-
+            char pseudo[256];
+            for (i = 0; i < *num_clients; i++)
+            {
+                if (clients[i].socket_fd == socket)
+                {
+                    strncpy(pseudo, clients[i].pseudo, sizeof(pseudo));
+                    break;
+                }
+            }
+            notify_clients_on_disconnection(clients, *num_clients, pseudo);
+           
             
-        else
+        } else {
             printf("[Server] Recv error: %s\n", strerror(errno));
+        }
         close(socket); // Ferme la socket
         FD_CLR(socket, all_sockets); // Enlève la socket de l'ensemble
 
@@ -254,43 +291,173 @@ void read_data_from_socket(int socket,fd_set *all_sockets, Client clients[], int
             }
         }
         (*num_clients)--;
-
+        
 
 
     } else {
         printf("[%d] Got message: %s\n", socket, buffer);
-        // Relaie le message à toutes les autres sockets
         char pseudo[256];
+        char pseudo_with_status[600];
+       /*  if (strstr(buffer, "/info") != NULL) {
+             
+
+                
+        } */
+        // Relaie le message à toutes les autres sockets
+        
         for (i = 0; i < *num_clients; i++) {
             if (clients[i].socket_fd == socket) {
                 strncpy(pseudo, clients[i].pseudo, sizeof(pseudo));
+                if (strlen(clients[i].status) > 0)
+                {
+                    snprintf(pseudo_with_status, sizeof(pseudo_with_status), "%s (%s)", pseudo, clients[i].status);
+                }
+                else
+                {
+                    strncpy(pseudo_with_status, pseudo, sizeof(pseudo_with_status));
+                }
                 break;
             }
         }
-
-        for (i = 0; i <= *num_clients - 1; i++)
+        
+        if (strncmp(buffer, "/kick", 5) == 0 && socket == first_client_socket)
         {
-            printf("Client %d\n", i);
-            if (clients[i].socket_fd != server_socket)
+            char *token = strtok(buffer, " ");
+            if (token != NULL)
             {
-                printf("Sending message to client %s\n", clients[i].pseudo);
-                memset(&msg_to_send, '\0', sizeof(msg_to_send));
-                sprintf(msg_to_send, "[%s] %s", pseudo, buffer);
-                status = send(clients[i].socket_fd, msg_to_send, strlen(msg_to_send), 0);
-
-                printf("status: %d\n", status);
-                if (status == -1)
-                    printf("[Server] Send error to client %d: %s\n", i, strerror(errno));
-                    
+                token = strtok(NULL, " ");
+                if (token != NULL)
+                {
+                    // L'utilisateur a fourni un nom d'utilisateur à kicker
+                    handle_kick_command(token, server_socket, all_sockets, clients, *num_clients, fd_max);
+                    return;
+                }
             }
+            printf("[Server] Invalid /kick command format.\n");
         }
-        conversation_log(msg_to_send);
+        else if (strncmp(buffer, "/status", 7) == 0)
+        {
+            char *token = strtok(buffer, " ");
+            if (token != NULL)
+            {
+                token = strtok(NULL, " ");
+                if (token != NULL)
+                {
+                    // L'utilisateur a fourni un statut à définir
+                    handle_status_command(token, socket, clients, *num_clients);
+                    return;
+                }
+            }
+            printf("[Server] Invalid /status command format.\n");
+        }
+        else
+        {
+            for (i = 0; i <= *num_clients - 1; i++)
+            {
+                printf("Client %d\n", i);
+                if (clients[i].socket_fd != server_socket && clients[i].socket_fd != socket)
+                {
+                    printf("Sending message to client %s\n", clients[i].pseudo);
+                    memset(&msg_to_send, '\0', sizeof msg_to_send);
+                    sprintf(msg_to_send, "[%s]: %s", pseudo_with_status, buffer);
+                    printf("msg_to_send: %s\n", msg_to_send);
+                
+                    status = send(clients[i].socket_fd, msg_to_send, strlen(msg_to_send), 0);
+
+                    printf("status: %d\n", status);
+                    if (status == -1)
+                        printf("[Server] Send error to client %d: %s\n", i, strerror(errno));
+                        
+                }
+                else if (clients[i].socket_fd == socket)
+                {
+                    memset(&msg_to_send, '\0', sizeof(msg_to_send));
+                    sprintf(msg_to_send, "[%s] (Me): %s",pseudo_with_status, buffer);
+                    printf("msg_to_send: %s\n", msg_to_send);
+                    status = send(clients[i].socket_fd, msg_to_send, strlen(msg_to_send), 0);
+                    if (status == -1)
+                        printf("[Server] Send error to client %d: %s\n", i, strerror(errno));
+                }
+            }
+            conversation_log(msg_to_send);
+        }
         memset(&pseudo, '\0', sizeof pseudo);
+        memset(&pseudo_with_status, '\0', sizeof pseudo_with_status);
         memset(&buffer, '\0', sizeof buffer);
         memset(&msg_to_send, '\0', sizeof msg_to_send);
     }
         
-} 
+}
+
+void handle_kick_command(char *username, int server_socket, fd_set *all_sockets, Client clients[], int num_clients, int *fd_max)
+{
+    // Parcourir la liste des clients pour trouver celui à kicker
+    int i;
+    for (i = 0; i < num_clients; i++) {
+        if (strcmp(clients[i].pseudo, username) == 0) {
+            // Fermer la socket du client à kicker
+            close(clients[i].socket_fd);
+            FD_CLR(clients[i].socket_fd, all_sockets); // Retirer la socket de l'ensemble surveillé
+
+            // Supprimer le client de la liste des clients
+            for (int j = i; j < num_clients - 1; j++) {
+                clients[j] = clients[j + 1];
+            }
+            num_clients--;
+
+            printf("[Server] User '%s' has been kicked.\n", username);
+
+            // Envoyer un message de confirmation à tous les autres clients
+            char kick_msg[256];
+            sprintf(kick_msg, "[Server] User '%s' has been kicked.\n", username);
+            for (int k = 0; k < num_clients; k++) {
+                if (clients[k].socket_fd != server_socket) {
+                    send(clients[k].socket_fd, kick_msg, strlen(kick_msg), 0);
+                }
+            }
+
+            return;
+        }
+    }
+
+    // Si l'utilisateur n'a pas été trouvé
+    printf("[Server] User '%s' not found.\n", username);
+}
+
+void handle_status_command(char *status, int socket, Client clients[], int num_clients)
+{
+    char status_msg[BUFSIZ];
+    int status_sent = 0;
+
+    for (int i = 0; i < num_clients; i++) {
+        if (clients[i].socket_fd == socket) {
+            strncpy(clients[i].status, status, sizeof(clients[i].status)); // Définir le statut de l'utilisateur
+            sprintf(status_msg,"[Server] User '%s' status set to '%s'.\n", clients[i].pseudo, status);
+            for (int i = 0; i < num_clients; i++) {
+                
+                    int status = send(clients[i].socket_fd, status_msg, strlen(status_msg), 0);
+                    if (status == -1) {
+                        printf("[Server] Send error to client %d: %s\n", clients[i].socket_fd, strerror(errno));
+                    } else {
+                        status_sent = 1;
+                    }
+                
+            }
+
+            // Vérifier si le message a été envoyé avec succès
+            if (status_sent) {
+                printf("[Server] Status change notification sent to all clients.\n");
+            } else {
+                printf("[Server] Failed to send status change notification to any clients.\n");
+            }
+            
+            return;
+
+
+        }
+    }
+    printf("[Server] User not found.\n");
+}
 
 void handle_server_interrupt(int signal)
 {
@@ -321,4 +488,41 @@ char* heure()
 
     strftime(buffer, sizeof(buffer),"%X", localtime(&timestamp));
     return buffer;
+}
+
+
+void notify_clients_on_connection(Client clients[], int num_clients, char* new_client_pseudo)
+{
+    char msg_to_send[BUFSIZ];
+    int status;
+
+    memset(&msg_to_send, '\0', sizeof(msg_to_send));
+    sprintf(msg_to_send, "[%s] s'est connecté.\n", new_client_pseudo);
+
+    for (int i = 0; i < num_clients; i++) {
+        if (clients[i].socket_fd != server_socket) {
+            status = send(clients[i].socket_fd, msg_to_send, strlen(msg_to_send), 0);
+            if (status == -1) {
+                printf("[Server] Send error to client %d: %s\n", clients[i].socket_fd, strerror(errno));
+            }
+        }
+    }
+}
+
+void notify_clients_on_disconnection(Client clients[], int num_clients, char* disconnected_client_pseudo)
+{
+    char msg_to_send[BUFSIZ];
+    int status;
+
+    memset(&msg_to_send, '\0', sizeof(msg_to_send));
+    sprintf(msg_to_send, "[%s] s'est déconnecté.\n", disconnected_client_pseudo);
+
+    for (int i = 0; i < num_clients; i++) {
+        if (strcmp(clients[i].pseudo, disconnected_client_pseudo) != 0) { 
+            status = send(clients[i].socket_fd, msg_to_send, strlen(msg_to_send), 0);
+            if (status == -1) {
+                printf("[Server] Send error to client %d: %s\n", clients[i].socket_fd, strerror(errno));
+            }
+        }
+    }
 }
